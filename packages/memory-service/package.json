@@ -1,0 +1,63 @@
+{
+  "name": "@memforgeai/memory-service",
+  "version": "1.0.1",
+  "description": "Memforge Memory Service - Persistent semantic memory for AI coding assistants via MCP",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "memforge-memory": "./dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "mcpName": "io.github.volsier/memforge-memory",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "memforge",
+    "memory",
+    "ai-coding",
+    "cursor",
+    "claude",
+    "pgvector",
+    "semantic-search"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zql0805/memforge.git",
+    "directory": "packages/memory-service"
+  },
+  "homepage": "https://github.com/zql0805/memforge",
+  "dependencies": {
+    "@memforgeai/shared": "*",
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "p-limit": "^6.2.0",
+    "web-tree-sitter": "^0.26.9",
+    "ws": "^8.20.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "tree-sitter-cli": "^0.26.9",
+    "tree-sitter-java": "^0.23.5",
+    "tree-sitter-php": "^0.24.2",
+    "tree-sitter-typescript": "^0.23.2",
+    "typescript": "^5.7.0"
+  }
+}

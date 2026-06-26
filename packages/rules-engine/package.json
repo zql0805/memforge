@@ -1,0 +1,53 @@
+{
+  "name": "@memforgeai/rules-engine",
+  "version": "1.0.0",
+  "description": "Memforge Rules Engine - Team coding standard governance via MCP",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "memforge-rules": "./dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "mcpName": "io.github.zql0805/memforge-rules",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "memforge",
+    "rules",
+    "coding-standards",
+    "ai-coding",
+    "cursor"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zql0805/memforge.git",
+    "directory": "packages/rules-engine"
+  },
+  "homepage": "https://github.com/zql0805/memforge",
+  "dependencies": {
+    "@memforgeai/shared": "1.0.0",
+    "@modelcontextprotocol/sdk": "^1.11.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

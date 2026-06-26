@@ -1,0 +1,49 @@
+---
+description: >
+  代码发现场景下优先使用 Codegraph MCP 远程服务进行结构化查询，减少 Token 消耗。
+  适用于同时接入了 Codegraph MCP 服务的环境。
+alwaysApply: true
+memforge_version: "2.0.0"
+---
+
+# 代码发现工具路由策略
+
+## 核心原则
+
+当需要理解代码结构时，**优先使用 Codegraph MCP 的结构化工具**，而非 Grep/Glob/Read 全文搜索。
+Codegraph 基于 AST 实时解析，已索引多个仓库，查询精确且 Token 消耗低。
+
+## 工具选择决策树
+
+| 需要做的事 | 首选（Codegraph） | 备选（传统工具） |
+|---|---|---|
+| 根据任务描述获取相关代码 | `codegraph_context(task)` | 手动 Grep + Read 多文件 |
+| 查找函数/类/方法定义 | `codegraph_search(query)` | Grep 按函数名搜索 |
+| 追踪谁调用了某函数 | `codegraph_callers(symbol)` | Grep 逐文件追踪 |
+| 追踪某函数调了什么 | `codegraph_callees(symbol)` | Grep 逐文件追踪 |
+| 追踪两个符号间的调用路径 | `codegraph_trace(from, to)` | 手动逐层追踪 |
+| 分析修改某符号的影响范围 | `codegraph_impact(symbol)` | git diff + 手动分析 |
+| 批量查看多个相关符号源码 | `codegraph_explore(symbols)` | 逐个 Read 文件 |
+| 查看单个符号签名和位置 | `codegraph_node(symbol)` | Grep + Read |
+| 查看项目文件结构 | `codegraph_files(project)` | ls / Glob |
+
+### 多项目查询
+
+所有工具支持 `projectPath` 参数切换目标仓库，格式：`/opt/memforge/repos/<产品线>/<仓库名>`
+
+## 仍然使用 Grep/Glob/Read 的场景
+
+以下场景**直接使用传统工具**：
+
+- **文本内容搜索**：日志文本、错误消息、配置值、字符串常量
+- **文件名搜索**：按文件名模式查找文件（Glob）
+- **配置文件**：读取 JSON/YAML/TOML/ENV 等
+- **文档/注释**：搜索 Markdown、README、注释
+- **非代码文件**：SQL 脚本、Shell 脚本、Dockerfile
+- **已知文件路径**：直接 Read
+
+## 注意事项
+
+- Codegraph 数据基于 AST 实时解析，代码变更后 ~1s 自动同步
+- 优先使用 `codegraph_context(task)` —— 描述任务即可获取相关代码，无需精确指定符号名
+- 如果 Codegraph MCP 不可用（服务离线/网络不通），静默回退到 Grep/Glob/Read

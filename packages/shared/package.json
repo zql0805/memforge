@@ -1,0 +1,47 @@
+{
+  "name": "@memforgeai/shared",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "memforge",
+    "mcp",
+    "shared"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zql0805/memforge.git",
+    "directory": "packages/shared"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "ioredis": "^5.10.1",
+    "pg": "^8.13.0",
+    "pino": "^9.5.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/ioredis": "^4.28.10",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.7.0"
+  }
+}

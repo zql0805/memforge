@@ -1,0 +1,43 @@
+{
+  "name": "memforge",
+  "version": "1.11.0",
+  "private": true,
+  "description": "Engineering Intelligence Platform - 工程师智能成长平台",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/shared && npm run build -w packages/memory-service && npm run build -w packages/rules-engine && npm run build -w packages/knowledge-service && npm run build -w packages/gateway",
+    "build:memory": "npm run build -w packages/memory-service",
+    "build:rules": "npm run build -w packages/rules-engine",
+    "build:knowledge": "npm run build -w packages/knowledge-service",
+    "build:gateway": "npm run build -w packages/gateway",
+    "build:proxy": "node scripts/proxy/build.mjs",
+    "build:ui": "npm run build -w packages/web-ui",
+    "build:all": "npm run build && npm run build:proxy && npm run build:ui",
+    "dev:memory": "npm run dev -w packages/memory-service",
+    "dev:rules": "npm run dev -w packages/rules-engine",
+    "dev:knowledge": "npm run dev -w packages/knowledge-service",
+    "dev:gateway": "npm run dev -w packages/gateway",
+    "clean": "rm -rf packages/*/dist packages/*/node_modules node_modules",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0",
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "esbuild": "^0.27.7",
+    "vitest": "^4.1.2"
+  },
+  "dependencies": {
+    "tree-sitter-kotlin": "^0.3.8"
+  }
+}

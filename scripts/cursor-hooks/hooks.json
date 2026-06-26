@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "hooks/memforge/on-session-start.sh",
+        "timeout": 20
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "hooks/memforge/on-pre-write.sh",
+        "matcher": "Write|StrReplace",
+        "timeout": 20
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "hooks/memforge/on-post-write-docs.sh",
+        "matcher": "Write|StrReplace",
+        "timeout": 10
+      },
+      {
+        "command": "hooks/memforge/on-post-review.sh",
+        "matcher": "Write|StrReplace",
+        "timeout": 5
+      }
+    ],
+    "stop": [
+      {
+        "command": "hooks/memforge/on-session-stop.sh",
+        "timeout": 15,
+        "loop_limit": 1
+      }
+    ]
+  }
+}

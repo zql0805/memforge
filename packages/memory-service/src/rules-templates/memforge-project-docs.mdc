@@ -1,0 +1,28 @@
+---
+description: Memforge 项目文档管理规则 — docs/ 为文档唯一存放位置，配合 Memforge 文档索引功能
+alwaysApply: true
+memforge_version: "1.0.0"
+---
+
+# 项目文档管理规则
+
+## docs/ 目录
+
+项目根目录下的 `docs/` 目录为项目文档的**唯一**存放位置。
+Memforge 的文档索引工具（`index_documents` / `sync_documents` / `watch_docs`）默认扫描此目录。
+
+### 查找文档
+- 需要查阅项目文档时，在 `docs/` 目录及其子目录中查找。
+
+### 新增文档
+- 需要新建文档时，放入 `docs/` 对应子目录：
+  - `docs/arch/` — 架构与设计文档
+  - `docs/api/` — 接口文档
+  - `docs/analysis/` — 分析报告
+  - `docs/code-review/` — Code Review 记录
+  - `docs/feature/` — 功能需求与重构指南
+- 如果对应子目录不存在，按需创建。
+
+### 禁止使用 .cursor/prDocs/
+- **不再**在 `.cursor/prDocs/` 目录下创建或存放文档。
+- 如果发现项目中仍有 `.cursor/prDocs/` 目录，应将其内容迁移到 `docs/` 对应子目录后删除。

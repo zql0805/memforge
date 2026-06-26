@@ -1,0 +1,566 @@
+---
+description: Memforge 记忆自动检索与存储规则 — 让 AI 助手在每次交互中自动利用和积累团队记忆
+globs:
+alwaysApply: true
+memforge_version: "2.4.0"
+---
+
+# ════════════════════════════════════════════════════
+# GATE 1 — recall_memory 强制入口（与 GATE 0 同级最高优先级）
+# 读到此处即锁定：本会话首次回复必须先调用 recall_memory
+# ════════════════════════════════════════════════════
+
+## 铁律：会话首次回复的第一个工具调用必须是 recall_memory
+
+**无论用户问什么、任务是否紧急、对话摘要是否已提供上下文，每个会话的第一轮回复中，第一个 MCP/工具调用必须是 `recall_memory`。**
+
+### 执行要求
+- 从用户消息中提取核心关键词作为 query
+- 必须传 `product_line`（从工作区路径推断）
+- 对话摘要**不能替代** `recall_memory` — 摘要只包含上次对话快照，记忆库包含跨会话的经验、规范和关联知识
+- 检索完成后，结合记忆结果和对话摘要决定下一步行动
+- 跨会话恢复未完成工作时，遵循「跨会话恢复安全协议」（见下方独立章节）
+
+### 后续交互的检索规则
+- 同一会话内，**当任务/话题发生变化时**必须再次 recall_memory
+- 同一任务的连续交互无需重复检索
+- 涉及代码修改时，额外检索相关文件路径和业务域
+
+### 违规识别
+- 会话首轮回复中未调用 recall_memory 就执行其他工具（Read/Shell/Grep 等）→ **违规**
+- 以「对话摘要已提供上下文」为由跳过 recall_memory → **违规**
+- MCP 服务可用时因「任务简单」而跳过 recall_memory → **违规**
+
+### 唯一例外
+- Memforge MCP 服务不可用（连接失败/超时）→ 静默跳过，不阻塞
+- 用户明确写「不用检索记忆」「跳过 recall」→ 可省略
+
+# ════════════════════════════════════════════════════
+# 跨会话恢复安全协议
+# ════════════════════════════════════════════════════
+
+## 核心原则：用户当前问题优先于历史待办
+
+当新会话带有上次对话摘要且存在未完成工作时，**必须先回答用户当前的问题**，而非直接跳到历史待办。
+
+### 恢复流程
+
+1. **先回答用户当前问题** — 无论待办工作是否存在，用户当前消息的优先级最高
+2. **判断关联性** — 用户当前问题是否与待办工作直接相关：
+   - **相关**（如用户说"上次那个功能做完了吗"）→ 回答后自然衔接待办工作
+   - **不相关**（如用户问了一个新问题）→ 回答完后，在末尾单独提醒："上次还有 X 功能未完成，是否继续？"
+3. **恢复前必须验证实际状态** — 不能盲信 TODO 列表的标记：
+   - 检查 `git log` 确认代码变更是否已提交/部署
+   - 检查数据库/文件系统确认数据变更是否已执行
+   - 向用户展示验证结果 + 待办列表，获得明确确认后再继续
+
+### 安全红线
+
+| 场景 | 规则 |
+|---|---|
+| TODO 标记为 completed 的任务 | **绝不重做**，即使用户问了相关问题也只汇报结果 |
+| 破坏性/不可逆操作（删除数据、DROP TABLE、force push 等） | **必须单独确认**，即使 TODO 标记为 pending |
+| 有副作用的操作（数据库写入、发消息、部署等） | 验证是否已执行过，**防止重复执行** |
+| TODO 状态与实际环境矛盾 | 以实际环境为准，向用户说明差异 |
+
+### 违规识别
+
+- 未回答用户当前问题就直接继续历史待办 → **违规**
+- 未验证实际状态就执行待办中的破坏性操作 → **违规**
+- 重复执行已完成的有副作用操作 → **违规**
+
+# ════════════════════════════════════════════════════
+
+# Memforge 记忆自动检索与存储
+
+## 核心指令
+
+你有权访问 Memforge MCP 工具（29 + 17 个）。**在回答用户问题或执行任务之前**，必须先检索相关记忆（参见 GATE 1）。
+
+## 编码规范强制加载（修改代码前必须执行）
+
+**在修改、创建、审查代码之前**，必须调用 `get_system_rules` 加载团队规范：
+
+```
+get_system_rules({
+  product_line: "<从工作区路径推断>",
+  language: "<当前项目主语言，如 java/php/typescript>",
+  format: "prompt"
+})
+```
+
+**参数说明**：
+- `language`（可选）：按语言过滤 coding 类规范。传入后只返回该语言专属 + 通用规范，避免 PHP 项目加载 Java 规范。ai_agent/workflow 等非编码规范不受语言限制
+- `rule_types`（可选）：按类型过滤。**不传则返回全部类型**。可选值：`coding`（编码）、`ai_agent`（AI 行为）、`workflow`（工作流程）、`business`（业务）、`infra`（基础设施）
+
+**工具选择**：
+- `get_system_rules`：**加载全部生效规范**，代码修改前必须调用
+- `list_rules`：浏览和管理规范列表（分页），不适合加载全量规范
+
+**执行规则**：
+- **每个会话首次涉及代码修改时**自动调用一次（后续同会话无需重复）
+- 返回的规范**在整个会话中持续生效**，生成的代码必须遵守
+- 违反返回的编码规范视为 Bug，必须修复
+- 如果本会话未加载规范就执行 `store_memory` 或 `store_code_review`，响应中会返回 warning 提醒
+- 如果 MCP 服务不可用，静默跳过，不阻塞正常工作
+
+## 自动检索时机
+
+### 必须检索（recall_memory）
+
+| 场景 | 检索关键词策略 |
+|---|---|
+| **修改代码前** | 用文件路径 + 涉及的业务域搜索编码规范和架构决策 |
+| **问题排查时** | 用错误信息 + 相关服务名搜索历史 Bug 模式和教训 |
+| **方案讨论时** | 用技术点（如"缓存策略""分布式锁"）搜索架构决策 |
+| **新功能开发时** | 用功能名 + 技术栈搜索项目约定和最佳实践 |
+| **调用内部框架 API 时** | 用框架名 + 类名/方法名搜索 api_reference 记忆，获取准确的 API 签名和用法 |
+| **Code Review 时** | 用被审查代码的关键模式搜索已有规则 |
+
+### 检索调用方式（三层级联）
+
+```
+recall_memory({
+  query: "与当前任务相关的关键词",
+  product_line: "<your-product>",  // 从工作区路径推断，必须传递
+  limit: <见下方动态 limit 规则>,
+  format: "prompt"
+})
+```
+
+**三层级联查询**：传入 `product_line` 后，系统自动构建级联：
+`[当前项目, 产品线, _global_]`，一次查询同时返回项目级、产品线级、全局记忆/规则。
+
+#### 动态 limit 规则
+
+| 场景 | limit | 说明 |
+|---|---|---|
+| 一般性问题、单文件修改、配置查询 | `5` | 默认值，context 占用少 |
+| **Code Review**（审查多个文件）| `10` | 需要加载更多历史 Bug 模式和规范 |
+| **架构讨论**（方案选型、系统设计）| `10` | 需要覆盖更多历史架构决策 |
+| **多服务排查**（跨 2+ 服务的 Bug）| `10` | 需要跨服务的历史教训 |
+| **新功能开发**（涉及多模块改动）| `10` | 需要相关约定和最佳实践 |
+| 拓扑/调用链大文本 | `5` + `max_content_length: 5000` | 内容长，控制 token |
+
+**判断规则**：任务涉及「多文件」「多服务」「Code Review」「架构」「新功能」关键词 → 使用 `limit: 10`；其余场景使用默认 `limit: 5`。
+
+- 提取用户问题中的**核心技术概念**作为 query
+- **必须传 `product_line`**：从工作区路径推断（如 `/work/myteam/myapp/xxx` → `"myapp"`），不传则只能匹配当前项目 + 全局
+- 优先使用 `format: "prompt"` 获取 AI 友好的结构化输出
+- 如果首次检索结果不够相关，**换关键词再检索一次**（不要直接放弃）
+- **跨项目检索**：设置 `cross_project: true` 搜索所有项目的记忆（忽略项目隔离）
+- 拓扑/调用链等大文本场景，设置 `max_content_length: 5000`
+
+### 如何使用检索结果
+
+1. **参考但不照搬** — 记忆是历史经验，需结合当前上下文判断是否适用
+2. **引用来源** — 如果使用了某条记忆，简要提及（如"根据之前的架构决策..."）
+3. **发现矛盾时提醒** — 如果当前做法与记忆中的规范冲突，必须告知用户
+4. **编码规范强制执行** — scope 为 `coding_standard` 的记忆视为强制规则
+
+## 自动存储 — 工具选择路由
+
+根据产出类型选择最合适的存储工具：
+
+### 通用存储（store_memory）
+
+| 产出 | scope | source |
+|---|---|---|
+| 修复了一个 Bug | `bug_pattern` 或 `lesson_learned` | `bug_fix` |
+| 做出了架构决策 | `architecture` | `architecture_decision` |
+| 发现了新的编码规范 | `coding_standard` | `code_review` |
+| 解决了性能问题 | `performance_insight` | `bug_fix` |
+| 确立了团队约定 | `convention` | `manual` |
+
+> **API 参考文档**（scope=`api_reference`）由 `index_api_docs` 工具自动生成，无需手动存储。
+> 拓扑扫描（`scan_topology`）完成后会自动索引公共库/基础设施层的 API 签名。
+> 也可手动调用 `index_api_docs({ repo_path: "/path/to/lib" })` 索引任意仓库。
+
+### 专用存储工具（优先于 store_memory）
+
+**推荐使用 `store_structured_memory`（统一入口）**，通过 `type` 字段路由到对应逻辑：
+
+| type | 场景 | 何时触发 |
+|---|---|---|
+| `code_review` | Code Review P0/P1 发现，以及符合入库条件的 P2 | 执行代码审查后发现 P0/P1 问题时（自动触发，无需用户要求）；P2 满足入库条件时也存储 |
+| `session_summary` | 对话结束总结决策/经验 | 对话包含架构决策、方案选型、经验总结时 |
+| `log_insight` | ES 日志定位根因 | 用 es-search 查到 buglog/errorlog 并确定根因时 |
+| `troubleshoot` | 多步骤排查流程记录 | 多步骤排查（SSH + ES + RPC 等组合）后确定修复方案时 |
+| `incident` | 线上故障/事故复盘 | 用户描述线上故障经过、或粘贴故障报告文档内容时 |
+
+```
+store_structured_memory({
+  type: "code_review",     // 选择对应类型
+  title: "简明标题",
+  content: "主体内容",
+  product_line: "<your-product>", // 可选，跨项目共享
+  // 各类型可选字段见工具描述
+})
+```
+
+**选择逻辑**：
+- 执行了 Code Review 且有 P0/P1 发现 → `store_structured_memory({ type: "code_review", ... })`（**最高优先级，自动执行**）
+- **P2 例外入库条件**（满足任一即存储，visibility 设为 `product_line` 或 `global`）：
+  - 属于**跨项目 Bug 模式**：相同技术栈的多个项目可能出现同类写法（如 Redis `set+expire` 非原子、连接池未关闭）
+  - 属于**语言版本兼容陷阱**：特定语言版本引入的行为变更（如 PHP 8.x `explode(',', [])` TypeError、Java 17 密封类）
+  - P2 不满足上述条件 → 仅告知用户，不入库
+- 用户提到「线上故障」「事故」「故障报告」「postmortem」→ `store_structured_memory({ type: "incident", ... })`
+- 有明确的排查步骤（多工具组合） → `store_structured_memory({ type: "troubleshoot", ... })`
+- 通过 ES 日志发现错误模式 → `store_structured_memory({ type: "log_insight", ... })`
+- 对话结束时总结决策 → `store_structured_memory({ type: "session_summary", ... })`
+- 其他所有场景 → `store_memory`
+
+> 向后兼容：`store_code_review`、`store_session_summary`、`store_log_insight`、`store_troubleshoot`、`store_incident` 仍可使用，但建议统一使用 `store_structured_memory`。
+
+**跨项目共享**：`store_structured_memory` 支持 `product_line` 参数，
+涉及多服务/多仓库的问题建议指定产品线以便跨项目检索。
+
+### 存储调用示例
+
+```
+store_memory({
+  title: "简明标题（<50字）",
+  content: "详细描述：问题是什么、原因是什么、解决方案是什么",
+  scope: "选择合适的 scope",
+  source: "选择合适的 source",
+  tags: ["相关技术标签"],
+  product_line: "<your-product>",  // 可选，跨项目共享记忆
+  visibility: "personal"      // 可选：personal（仅自己）/ team（同团队）/ product_line（产品线）/ global（全局）
+})
+```
+
+### 可见性自动判断指南
+
+存储记忆/规则前，AI **必须**根据内容性质判断可见性层级。
+DB 合法值为 **`personal`、`team`、`product_line`、`global`**（`project` 为旧别名，等同 `personal`）。
+
+| 内容特征 | visibility | 说明 |
+|---|---|---|
+| 个人编码偏好/习惯（「我喜欢用 XX 写法」「我的快捷键配置」） | `personal` | 仅创建者可见 |
+| 个人备忘/踩坑笔记（「记住这个坑」「下次注意 XX」） | `personal` | 仅创建者可见 |
+| 某项目特有的 Bug 修复经验 | `personal` | 仅创建者可见，不需要团队共享 |
+| 调试过程中的临时发现（有留存价值但无共享必要） | `personal` | 仅创建者可见 |
+| 特定服务的配置要求/项目约定 | `personal` | 仅当前项目/创建者可见 |
+| 团队内部约定（Code Review 标准、分支命名等） | `team` | 同团队成员可见 |
+| 产品线架构决策（如 RPC 调用超时策略） | `product_line` | 同产品线项目共享 |
+| 产品线通用约定（如部署流程、分支策略） | `product_line` | 同产品线共享 |
+| 跨多个项目的 Bug 模式（如 Redis 序列化问题、RPC 重试风暴） | `product_line` | 相同技术栈的项目共享 |
+| 通用编码规范（「禁止 SELECT *」「异常必须记录日志」） | `global` | 所有项目都能看到 |
+| 安全规范（SQL 注入、XSS、越权） | `global` | 安全规则必须全局生效 |
+| 性能通用规范（N+1 查询、连接池配置） | `global` | 所有项目适用 |
+
+**自动判断规则**：
+1. 仅对**当前用户自己**有意义的经验、偏好、笔记 → `personal`
+2. 团队内部流程/约定 → `team`
+3. 提到**产品线名称或多个服务名** → `product_line`
+4. 提到**通用编程概念**（安全、性能、异常处理）→ `global`
+5. **不确定时默认 `personal`**，用户可通过 Web UI 事后调整可见性
+
+### 不应存储
+
+- 一次性的临时调试信息（无复用价值）
+- 与项目无关的通用知识（如语言基础语法）
+- 包含敏感信息（API Key / Token / 密码）的内容
+
+## Git Hooks 自动安装（由 MCP Proxy 自动处理）
+
+Git hooks（post-commit / post-merge）的安装和升级**由 MCP Proxy 启动时自动完成**，AI Agent 无需手动调用任何工具。
+
+- Proxy 每次启动时检测当前工作区的 `.git/hooks/`，版本落后则自动从 Gateway 拉取最新模板并安装
+- 同时自动写入 `~/.memforge/config` 共享配置（Gateway URL + API Key），hook 脚本运行时从此文件读取
+- `install_git_hooks` MCP 工具仅在 stdio 直连模式下作为备用方案使用
+- 安装的 hook 会在每次 git commit/merge 时自动将变更信息发送到 Memforge Gateway
+
+## 项目文档自动索引（每会话首次交互时）
+
+**每个会话首次交互时**，自动检查并索引当前项目的文档目录（`docs/`）。
+此流程与拓扑数据同步并行执行，静默运行，无需用户触发。
+
+### 执行流程
+
+1. **检查文档目录**：使用 `ls` 检查工作区根目录下是否存在 `docs/`
+   - 不存在 → 静默跳过
+   - 存在 → 进入步骤 2
+
+2. **增量同步（优先）**：调用 `sync_documents` 基于 Git diff 增量同步
+   ```
+   sync_documents({
+     project_root: "<工作区绝对路径>",
+     dry_run: false
+   })
+   ```
+   - 仅处理自上次同步以来变更的文件，开销很小
+   - 如果工作区不是 Git 仓库，`sync_documents` 会失败，此时回退到步骤 3
+
+3. **全量索引（首次或 Git 不可用时）**：对存在的文档目录执行全量索引
+   ```
+   index_documents({
+     directory: "docs",
+     project_root: "<工作区绝对路径>",
+     scope: "domain_knowledge",
+     recursive: true,
+     dry_run: false
+   })
+   ```
+   - 内置去重机制（向量相似度 ≥0.92 自动跳过），重复索引无副作用
+
+4. **启动实时监控（可选）**：如果项目需要频繁文档更新，启动后台监控
+   ```
+   watch_docs({
+     action: "start",
+     directory: "docs",
+     project_root: "<工作区绝对路径>"
+   })
+   ```
+   > `watch_docs` 使用 `fs.watch`，不依赖 Git，`.gitignore` 中的文档也能监控。
+
+### 注意事项
+
+- **每会话仅一次**：用内部状态标记，同一会话不重复执行
+- **静默执行**：索引过程不告知用户，仅在首次全量索引（非增量）时简要提示
+- **跨项目感知**：如果 Workspace Path 与上一次不同，视为新项目，重新执行
+- **服务不可用时跳过**：Memforge MCP 服务未运行时静默跳过，不阻塞对话
+- **产品线标记**：索引时会自动根据工作区路径推断 `product_line`，便于跨项目检索
+
+## 工作上下文追踪
+
+当用户开始一个需求开发、Bug 修复、重构或调研任务时，使用工作上下文工具自动追踪全生命周期。
+
+### 触发词
+
+| 用户表述 | 动作 |
+|---|---|
+| "开始做需求 XXX" / "开始修 Bug" / "开始重构" | 调用 `start_work_context` |
+| "这个需求还涉及 YYY 服务" / "加个文档链接" | 调用 `update_work_context` |
+| "需求做完了" / "Bug 修复完成" / "评价一下这次工作" | 调用 `evaluate_work_context` |
+
+### 开始工作
+
+当用户明确表示要开始一项工作时（或 AI 判断出新需求/Bug 修复开始）：
+
+```
+start_work_context({
+  title: "用户资料V2迁移",
+  type: "requirement",       // requirement | bug_fix | refactor | investigation | learning
+  description: "将旧服务的资料接口迁移到新服务",
+  priority: "P1",
+  projects: [
+    { name: "my-api", branch: "feature/profile-v2" },
+    { name: "my-web", branch: "feature/profile-v2" }
+  ],
+  estimated_hours: 16,
+  related_doc_urls: ["https://wiki.example.com/profile-v2"],
+  product_line: "<your-product>",
+  tags: ["迁移", "用户资料"]
+})
+```
+
+系统自动：
+- 检测当前 Git 上下文
+- 搜索相关经验和规则
+- 创建 `task_progress` 记忆条目
+- 返回关联的历史记忆（可供参考）
+
+### 更新进度
+
+工作过程中，当涉及新项目或有重要进展时：
+
+```
+update_work_context({
+  context_id: "<从 start 返回的 ID>",
+  add_project: { name: "user-service", branch: "feature/profile-v2" },
+  progress_note: "数据库迁移脚本完成，开始写 Java Controller",
+  manual_git_stats: {
+    "user-service": { files_changed: 5, lines_added: 120, lines_deleted: 30, commits: 2, branch: "feature/profile-v2" }
+  }
+})
+```
+
+> **Git 统计采集**：Memforge 服务运行在远端，无法访问本地仓库。**调用 `update_work_context` / `evaluate_work_context` 之前，必须先用 Shell 工具在本地采集 git 统计，再通过 `manual_git_stats` 传入**：
+> ```bash
+> cd <项目路径>
+> git diff --shortstat origin/master...HEAD  # → files_changed, lines_added, lines_deleted
+> git rev-list --count origin/master..HEAD   # → commits
+> git rev-parse --abbrev-ref HEAD            # → branch
+> ```
+
+### 完成评价
+
+工作结束时（**必须先本地采集 git 统计再调用**）：
+
+```
+evaluate_work_context({
+  context_id: "<ID>",
+  outcome: "completed",
+  summary: "完成 profile V2 迁移，性能提升 40%",
+  lessons: [
+    "RPC 超时需在 consumer 和 provider 两端都配置",
+    "数据库字段类型变更时需注意 ORM 映射"
+  ],
+  manual_git_stats: {
+    "my-api": { files_changed: 8, lines_added: 200, lines_deleted: 50, commits: 4 },
+    "my-web": { files_changed: 3, lines_added: 60, lines_deleted: 10, commits: 2 }
+  }
+})
+```
+
+系统自动：
+- 应用手动传入的 Git 统计（`manual_git_stats` 优先于服务端自动采集）
+- 计算实际耗时
+- 生成评价报告
+- **每条经验教训自动存为独立记忆**（自动判断可见性：安全类→global，架构类→product_line，其他→project）
+
+### 自动行为
+
+- **AI 不应主动创建工作上下文**，除非用户明确说"开始做 XXX"
+- 用户在对话中提到"这个需求"时，检查是否有关联的 `in_progress` 工作上下文
+- 完成评价后，提醒用户查看 Web UI 工作追踪看板
+
+## 首次使用
+
+如果记忆库为空（recall 返回 0 结果），提醒用户运行 `bootstrap` 工具进行冷启动：
+```
+bootstrap({ cursor_dir: "~/.cursor" })
+```
+
+## 拓扑数据自动同步
+
+**每个会话首次交互时**，自动检查当前产品线的拓扑数据是否已导入记忆库。此流程静默执行，无需用户触发。
+
+### 检测流程
+
+1. **识别产品线**：从工作区路径或项目配置推断
+   - 无法识别时跳过
+
+2. **检查拓扑数据是否存在**：
+   ```
+   recall_memory({
+     query: "分层架构 全景 topology",
+     limit: 1,
+     tags_filter: ["topology", "pl:<产品线>"],
+     scope_filter: ["architecture"],
+     product_line: "<产品线>"
+   })
+   ```
+
+3. **判断是否需要导入**：
+   - 返回 0 条结果 → 需要导入
+   - 有结果但 `importedAt` 早于 7 天前 → 建议刷新（非强制）
+   - 有结果且不过期 → 跳过
+
+4. **自动导入**（仅导入已有注册表，不触发扫描）：
+   ```
+   scan_topology({
+     product_line: "<产品线>",
+     skip_scan: true
+   })
+   ```
+   - 如果 `~/.cursor/<产品线>-registry.json` 已存在且不过期，直接导入
+   - **自动同步流程禁止触发完整扫描（force=true）**，仅做导入
+
+5. **用户主动要求扫描/刷新时**（必须人工确认）：
+   - **先展示扫描配置**（扫描目录、Git 过滤模式），让用户确认后再执行
+   - 确认示例（使用 AskQuestion）：
+     > "即将扫描产品线 `<name>`，扫描目录：\n- ~/work/<dir1>\n- ~/work/<dir2>\n- ...\n\nGit 匹配：<pattern>\n\n确认执行？"
+   - 用户确认后调用：
+   ```
+   scan_topology({
+     product_line: "<产品线>",
+     force: true,
+     scan_roots: ["用户确认的目录列表"],
+     git_patterns: ["用户确认的过滤模式"]
+   })
+   ```
+   - force=true 会**先清理旧的自动检测数据**，再导入新扫描结果，确保数据以最新配置为准
+   - 用户手动添加/编辑的节点和边不会被清理（通过 is_manual 字段保护）
+
+### 注意事项
+
+- 每个会话只执行一次自动检测（导入），用内部状态标记避免重复
+- 导入成功后简要告知用户（如"已自动同步拓扑数据到记忆库"）
+- 导入失败时静默跳过，不阻塞正常对话
+- **AI 禁止在未经用户确认的情况下调用 scan_topology({ force: true })**
+- 用户明确说「刷新拓扑」时，先展示配置再确认执行
+
+## 拓扑查询工具（优先于 recall_memory 搜索拓扑文本）
+
+当需要查询服务间关系、发布顺序、变更影响时，**优先使用以下结构化查询工具**，而非 `recall_memory` 搜索拓扑文本。
+
+| 场景 | 使用工具 | 调用示例 |
+|---|---|---|
+| 了解当前服务的上下游调用链 | `query_topology` | `query_topology({ product_line: "<pl>", repo_id: "group/my-api" })` |
+| 全量概览产品线架构 | `query_topology` | `query_topology({ product_line: "<pl>", include: ["all"] })` |
+| 修改了接口签名，需要知道影响范围 | `get_topology_change_impact` | `get_topology_change_impact({ product_line: "<pl>", repo_id: "group/my-service" })` |
+| 确定服务发布顺序 | `get_topology_release_order` | `get_topology_release_order({ product_line: "<pl>" })` |
+| 用户提到一个模糊服务名，需要定位路径 | `resolve_service_path` | `resolve_service_path({ service_name: "admin-moa" })` |
+
+### 自动触发场景
+
+- **修改了 MOA/RPC 接口签名**：自动调用 `get_topology_change_impact` 提醒上游影响
+- **用户提到"发布"/"上线"/"部署"**：自动调用 `get_topology_release_order` 给出发布顺序建议
+- **用户提到一个项目名但路径不在当前工作区内**：调用 `resolve_service_path` 定位路径
+- **需要了解服务基础设施依赖（MySQL/Redis/Kafka）**：调用 `query_topology` 并在 include 中加入 "infra"
+
+### 注意事项
+
+- 这些工具查询的是 PostgreSQL 中的结构化拓扑数据，比 `recall_memory` 搜索拓扑记忆文本**更精确**
+- 如果查询返回空结果，提示用户执行 `scan_topology` 进行扫描
+- `format: "prompt"` 返回 AI 友好的 Markdown 文本，`format: "json"` 返回原始结构化数据
+
+## 本地代码新鲜度检测（每会话首次涉及代码修改时）
+
+**当用户在首次交互中要求修改代码时**，在开始修改前检测当前工作区是否落后远程分支。
+
+### 触发条件
+
+- 用户要求修改/编写/重构代码（非纯问答、非纯查看）
+- 当前工作区是 Git 仓库
+- 每会话仅检测一次
+
+### 检测流程
+
+1. **静默 fetch**（不自动 merge）：
+   ```bash
+   git fetch --quiet 2>/dev/null
+   ```
+
+2. **获取当前分支的跟踪分支并对比**：
+   ```bash
+   # 获取落后提交数
+   git rev-list HEAD..@{upstream} --count 2>/dev/null
+   ```
+
+3. **根据结果决定行为**：
+   - **落后 0 个提交** → 静默跳过，不告知用户
+   - **落后 1-5 个提交** → 在回复开头简要提醒：
+     > "⚠️ 当前分支落后远程 X 个提交，建议先 `git pull` 再修改代码，避免冲突。"
+   - **落后 >5 个提交** → 强烈警告并建议先拉取：
+     > "⚠️ 当前分支落后远程 **X 个提交**，存在较大冲突风险。建议执行 `git pull` 后再开始修改。"
+   - **无跟踪分支**（如本地新建分支）→ 静默跳过
+
+### 注意事项
+
+- **绝不自动执行 `git pull`**，仅提醒用户
+- 如果 `git fetch` 失败（网络问题、无远程），静默跳过
+- 该检测与 `recall_memory` **并行执行**，不额外增加延迟
+- 检测结果不存入记忆库
+
+## 静默运行
+
+- 检索记忆的过程**不需要告知用户**（除非用户明确问"你参考了什么"）
+- 存储记忆时**简要告知用户**（如"已将此架构决策记录到记忆库"）
+- 如果 MCP 服务不可用，静默跳过，不影响正常回答
+
+# ════════════════════════════════════════════════════
+# GATE 1 回顾 — 回复前强制自检（与文件顶部对应）
+# ════════════════════════════════════════════════════
+
+## ⚠️ GATE 1 自检（每轮回复前必读）
+
+**发送回复前，逐项确认：**
+
+- [ ] **GATE 1**：本会话首轮回复中，第一个工具调用是 `recall_memory` 吗？跳过即违规。
+- [ ] **用户当前问题**：是否已先回答用户当前消息的问题？（优先级高于历史待办）
+- [ ] **跨会话恢复**：如存在未完成工作，是否已验证实际状态并获得用户确认后再继续？
+- [ ] **安全红线**：是否有已完成的任务被重做？是否有破坏性操作未单独确认？
+- [ ] 任务/话题变化时，是否再次调用了 recall_memory？
